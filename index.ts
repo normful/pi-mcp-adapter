@@ -14,7 +14,6 @@ import {
 } from "./commands.js";
 import { loadMcpConfig } from "./config.js";
 import {
-  buildProxyDescription,
   createDirectToolExecutor,
   resolveDirectTools,
 } from "./direct-tools.js";
@@ -184,54 +183,48 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   pi.registerTool({
     name: "mcp",
     label: "MCP",
-    description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
+    description: "Connect to MCP servers and call their tools",
     promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
     parameters: Type.Object({
       tool: Type.Optional(
         Type.String({
-          description: "Tool name to call (e.g., 'xcodebuild_list_sims')",
+          description: "Tool to call",
         }),
       ),
       args: Type.Optional(
         Type.String({
-          description: 'Arguments as JSON string (e.g., \'{"key": "value"}\')',
+          description: "JSON string of tool arguments",
         }),
       ),
       connect: Type.Optional(
         Type.String({
-          description:
-            "Server name to connect (lazy connect + metadata refresh)",
+          description: "Server name to connect to",
         }),
       ),
       describe: Type.Optional(
         Type.String({
-          description: "Tool name to describe (shows parameters)",
+          description: "Tool to show details for",
         }),
       ),
-      search: Type.Optional(
-        Type.String({ description: "Search tools by name/description" }),
-      ),
+      search: Type.Optional(Type.String({ description: "Search for tools" })),
       regex: Type.Optional(
         Type.Boolean({
-          description: "Treat search as regex (default: substring match)",
+          description: "Treat search as regex",
         }),
       ),
       includeSchemas: Type.Optional(
         Type.Boolean({
-          description:
-            "Include parameter schemas in search results (default: true)",
+          description: "Include schemas in search results",
         }),
       ),
       server: Type.Optional(
         Type.String({
-          description:
-            "Filter to specific server (also disambiguates tool calls)",
+          description: "Filter to specific server",
         }),
       ),
       action: Type.Optional(
         Type.String({
-          description:
-            "Action: 'ui-messages' to retrieve prompts/intents from UI sessions",
+          description: "'ui-messages' to retrieve UI session messages",
         }),
       ),
     }),

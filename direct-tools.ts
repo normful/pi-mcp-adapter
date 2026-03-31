@@ -134,62 +134,6 @@ export function resolveDirectTools(
   return specs;
 }
 
-export function buildProxyDescription(
-  config: McpConfig,
-  cache: MetadataCache | null,
-  directSpecs: DirectToolSpec[],
-): string {
-  let desc = `MCP gateway - connect to MCP servers and call their tools.\n`;
-
-  const directByServer = new Map<string, number>();
-  for (const spec of directSpecs) {
-    directByServer.set(
-      spec.serverName,
-      (directByServer.get(spec.serverName) ?? 0) + 1,
-    );
-  }
-  if (directByServer.size > 0) {
-    const parts = [...directByServer.entries()].map(
-      ([server, count]) => `${server} (${count})`,
-    );
-    desc += `\nDirect tools available (call as normal tools): ${parts.join(", ")}\n`;
-  }
-
-  const serverSummaries: string[] = [];
-  for (const serverName of Object.keys(config.mcpServers)) {
-    const entry = cache?.servers?.[serverName];
-    const definition = config.mcpServers[serverName];
-    const toolCount = entry?.tools?.length ?? 0;
-    const resourceCount =
-      definition?.exposeResources !== false
-        ? (entry?.resources?.length ?? 0)
-        : 0;
-    const totalItems = toolCount + resourceCount;
-    if (totalItems === 0) continue;
-    const directCount = directByServer.get(serverName) ?? 0;
-    const proxyCount = totalItems - directCount;
-    if (proxyCount > 0) {
-      serverSummaries.push(`${serverName} (${proxyCount} tools)`);
-    }
-  }
-
-  if (serverSummaries.length > 0) {
-    desc += `\nServers: ${serverSummaries.join(", ")}\n`;
-  }
-
-  desc += `\nUsage:\n`;
-  desc += `  mcp({ })                              → Show server status\n`;
-  desc += `  mcp({ server: "name" })               → List tools from server\n`;
-  desc += `  mcp({ search: "query" })              → Search for tools (MCP + pi, space-separated words OR'd)\n`;
-  desc += `  mcp({ describe: "tool_name" })        → Show tool details and parameters\n`;
-  desc += `  mcp({ connect: "server-name" })       → Connect to a server and refresh metadata\n`;
-  desc += `  mcp({ tool: "name", args: '{"key": "value"}' })    → Call a tool (args is JSON string)\n`;
-  desc += `  mcp({ action: "ui-messages" })        → Retrieve accumulated messages from completed UI sessions\n`;
-  desc += `\nMode: tool (call) > connect > describe > search > server (list) > action > nothing (status)`;
-
-  return desc;
-}
-
 type DirectToolExecute = ToolDefinition["execute"];
 
 export function createDirectToolExecutor(
