@@ -183,48 +183,57 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   pi.registerTool({
     name: "mcp",
     label: "MCP",
-    description: "Connect to MCP servers and call their tools",
-    promptSnippet: "MCP gateway - connect to MCP servers and call their tools",
+    description:
+      "Query and run MCP server tools. Workflow: 1) mcp({}) lists servers. 2) mcp({search:\"keyword\"}) finds tools. 3) mcp({tool:\"name\", args:'{\"key\":\"val\"}'}) runs a tool. mcp({describe:\"name\"}) shows full schema.",
+    promptSnippet:
+      "Query and run MCP server tools. Workflow: 1) mcp({}) lists servers. 2) mcp({search:\"keyword\"}) finds tools. 3) mcp({tool:\"name\", args:'{\"key\":\"val\"}'}) runs a tool. mcp({describe:\"name\"}) shows full schema.",
     parameters: Type.Object({
       tool: Type.Optional(
         Type.String({
-          description: "Tool to call",
+          description: "Tool name to invoke. Use with 'args'.",
         }),
       ),
       args: Type.Optional(
         Type.String({
-          description: "JSON string of tool arguments",
+          description:
+            "Tool params as JSON string. Required with 'tool'. Example: '{\"path\": \"file.txt\"}'",
         }),
       ),
       connect: Type.Optional(
         Type.String({
-          description: "Server name to connect to",
+          description:
+            "Connect to a server by name. Use mcp({}) to see available servers.",
         }),
       ),
       describe: Type.Optional(
         Type.String({
-          description: "Tool to show details for",
+          description: "Get full schema for a tool by exact name.",
         }),
       ),
-      search: Type.Optional(Type.String({ description: "Search for tools" })),
+      search: Type.Optional(
+        Type.String({
+          description:
+            "Search tool names/descriptions. Use 'server' to narrow scope.",
+        }),
+      ),
       regex: Type.Optional(
         Type.Boolean({
-          description: "Treat search as regex",
+          description: "Treat 'search' as regex.",
         }),
       ),
       includeSchemas: Type.Optional(
         Type.Boolean({
-          description: "Include schemas in search results",
+          description: "Include param schemas in search results.",
         }),
       ),
       server: Type.Optional(
         Type.String({
-          description: "Filter to specific server",
+          description: "Search only this server. Omit for all servers.",
         }),
       ),
       action: Type.Optional(
         Type.String({
-          description: "'ui-messages' to retrieve UI session messages",
+          description: "Set 'ui-messages' for UI messages. Omit otherwise.",
         }),
       ),
     }),
