@@ -2,7 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   ToolInfo,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
 import { Type } from "@sinclair/typebox";
 import {
