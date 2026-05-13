@@ -146,45 +146,6 @@ export async function initializeMcp(
     ctx.ui.notify(msg, "info");
   }
 
-  const envDirect = process.env.MCP_DIRECT_TOOLS;
-  if (envDirect !== "__none__") {
-    const missingCacheServers: string[] = [];
-    const currentCache = loadMetadataCache();
-    for (const [name, definition] of serverEntries) {
-      const hasDirect = definition.directTools !== undefined
-        ? !!definition.directTools
-        : !!config.settings?.directTools;
-      if (!hasDirect) continue;
-      const entry = currentCache?.servers?.[name];
-      if (!entry || !isServerCacheValid(entry, definition)) {
-        missingCacheServers.push(name);
-      }
-    }
-
-    if (missingCacheServers.length > 0) {
-      const bootstrapResults = await parallelLimit(
-        missingCacheServers.filter(name => !results.some(r => r.name === name && r.connection)),
-        10,
-        async (name) => {
-          const definition = config.mcpServers[name];
-          try {
-            const connection = await manager.connect(name, definition);
-            const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
-            toolMetadata.set(name, metadata);
-            updateMetadataCache(state, name);
-            return { name, ok: true };
-          } catch {
-            return { name, ok: false };
-          }
-        },
-      );
-      const bootstrapped = bootstrapResults.filter(r => r.ok).map(r => r.name);
-      if (bootstrapped.length > 0 && ctx.hasUI) {
-        ctx.ui.notify(`MCP: direct tools for ${bootstrapped.join(", ")} will be available after restart`, "info");
-      }
-    }
-  }
-
   lifecycle.setReconnectCallback((serverName) => {
     updateServerMetadata(state, serverName);
     updateMetadataCache(state, serverName);
