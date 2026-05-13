@@ -1,32 +1,25 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.js";
-import { resourceNameToToolName } from "./resource-tools.js";
+import type { McpConfig, McpPanelCallbacks } from "./types.js";
 import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.js";
 
 interface PanelTheme {
   border: string;
   title: string;
   selected: string;
-  direct: string;
   needsAuth: string;
   placeholder: string;
   description: string;
   hint: string;
-  confirm: string;
-  cancel: string;
 }
 
 const DEFAULT_THEME: PanelTheme = {
   border: "2",
   title: "2",
   selected: "36",
-  direct: "32",
   needsAuth: "33",
   placeholder: "2;3",
   description: "2",
   hint: "2",
-  confirm: "32",
-  cancel: "31",
 };
 
 function fg(code: string, text: string): string {
@@ -72,20 +65,11 @@ function fuzzyScore(query: string, text: string): number {
   return qi === lq.length ? score : 0;
 }
 
-function estimateTokens(tool: CachedTool): number {
-  const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
-  const descLen = tool.description?.length ?? 0;
-  return Math.ceil((tool.name.length + descLen + schemaLen) / 4) + 10;
-}
-
 type ConnectionStatus = "connected" | "idle" | "failed" | "needs-auth" | "connecting";
 
 interface ToolState {
   name: string;
   description: string;
-  isDirect: boolean;
-  wasDirect: boolean;
-  estimatedTokens: number;
 }
 
 interface ServerState {
@@ -110,11 +94,6 @@ class McpPanel {
   private nameQuery = "";
   private descSearchActive = false;
   private descQuery = "";
-  private dirty = false;
-  private confirmingDiscard = false;
-  private discardSelected = 1;
-  private importNotice: string | null = null;
-  private authNotice: string | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
   private tui: { requestRender(): void };
@@ -126,50 +105,22 @@ class McpPanel {
   constructor(
     config: McpConfig,
     cache: MetadataCache | null,
-    provenance: Map<string, ServerProvenance>,
     private callbacks: McpPanelCallbacks,
     tui: { requestRender(): void },
-    private done: (result: McpPanelResult) => void,
+    private done: () => void,
   ) {
     this.tui = tui;
 
     for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-      const prov = provenance.get(serverName);
       const serverCache = cache?.servers?.[serverName];
-
-      const globalDirect = config.settings?.directTools;
-      let toolFilter: true | string[] | false = false;
-      if (definition.directTools !== undefined) {
-        toolFilter = definition.directTools;
-      } else if (globalDirect) {
-        toolFilter = globalDirect;
-      }
 
       const tools: ToolState[] = [];
       if (serverCache) {
         for (const tool of serverCache.tools ?? []) {
-          const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(tool.name));
           tools.push({
             name: tool.name,
             description: tool.description ?? "",
-            isDirect,
-            wasDirect: isDirect,
-            estimatedTokens: estimateTokens(tool),
           });
-        }
-        if (definition.exposeResources !== false) {
-          for (const resource of serverCache.resources ?? []) {
-            const baseName = `get_${resourceNameToToolName(resource.name)}`;
-            const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(baseName));
-            const ct: CachedTool = { name: baseName, description: resource.description };
-            tools.push({
-              name: baseName,
-              description: resource.description ?? `Read resource: ${resource.uri}`,
-              isDirect,
-              wasDirect: isDirect,
-              estimatedTokens: estimateTokens(ct),
-            });
-          }
         }
       }
 
@@ -178,8 +129,7 @@ class McpPanel {
       this.servers.push({
         name: serverName,
         expanded: false,
-        source: prov?.kind ?? "user",
-        importKind: prov?.importKind,
+        source: "user",
         connectionStatus: status,
         tools,
         hasCachedData: !!serverCache,
@@ -194,7 +144,7 @@ class McpPanel {
     if (this.inactivityTimeout) clearTimeout(this.inactivityTimeout);
     this.inactivityTimeout = setTimeout(() => {
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done();
     }, McpPanel.INACTIVITY_MS);
   }
 
@@ -242,47 +192,12 @@ class McpPanel {
     }
   }
 
-  private updateDirty(): void {
-    this.dirty = this.servers.some((s) => s.tools.some((t) => t.isDirect !== t.wasDirect));
-  }
-
-  private buildResult(): McpPanelResult {
-    const changes = new Map<string, true | string[] | false>();
-    for (const server of this.servers) {
-      const changed = server.tools.some((t) => t.isDirect !== t.wasDirect);
-      if (!changed) continue;
-      const directTools = server.tools.filter((t) => t.isDirect);
-      if (directTools.length === server.tools.length && server.tools.length > 0) {
-        changes.set(server.name, true);
-      } else if (directTools.length === 0) {
-        changes.set(server.name, false);
-      } else {
-        changes.set(server.name, directTools.map((t) => t.name));
-      }
-    }
-    return { changes, cancelled: false };
-  }
-
   handleInput(data: string): void {
     this.resetInactivityTimeout();
-    this.importNotice = null;
-    this.authNotice = null;
 
-    if (this.confirmingDiscard) {
-      this.handleDiscardInput(data);
-      return;
-    }
-
-    // Global shortcuts — always work, even during desc search
     if (matchesKey(data, "ctrl+c")) {
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
-      return;
-    }
-
-    if (matchesKey(data, "ctrl+s")) {
-      this.cleanup();
-      this.done(this.buildResult());
+      this.done();
       return;
     }
 
@@ -305,12 +220,6 @@ class McpPanel {
       }
       if (matchesKey(data, "up")) { this.moveCursor(-1); return; }
       if (matchesKey(data, "down")) { this.moveCursor(1); return; }
-      if (matchesKey(data, "space")) {
-        // Toggle even while in desc search
-        const item = this.visibleItems[this.cursorIndex];
-        if (item) this.toggleItem(item);
-        return;
-      }
       if (data.length === 1 && data.charCodeAt(0) >= 32) {
         this.descQuery += data;
         this.rebuildVisibleItems();
@@ -327,24 +236,13 @@ class McpPanel {
         this.cursorIndex = Math.min(this.cursorIndex, Math.max(0, this.visibleItems.length - 1));
         return;
       }
-      if (this.dirty) {
-        this.confirmingDiscard = true;
-        this.discardSelected = 1;
-        return;
-      }
       this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.done();
       return;
     }
 
     if (matchesKey(data, "up")) { this.moveCursor(-1); return; }
     if (matchesKey(data, "down")) { this.moveCursor(1); return; }
-
-    if (matchesKey(data, "space")) {
-      const item = this.visibleItems[this.cursorIndex];
-      if (item) this.toggleItem(item);
-      return;
-    }
 
     if (matchesKey(data, "return")) {
       const item = this.visibleItems[this.cursorIndex];
@@ -352,19 +250,11 @@ class McpPanel {
       const server = this.servers[item.serverIndex];
       if (item.type === "server") {
         if (server.connectionStatus === "needs-auth") {
-          this.authNotice = `OAuth required — run /mcp-auth ${server.name} after closing this panel`;
           return;
         }
         server.expanded = !server.expanded;
         this.rebuildVisibleItems();
         this.cursorIndex = Math.min(this.cursorIndex, Math.max(0, this.visibleItems.length - 1));
-      } else if (item.toolIndex !== undefined) {
-        const tool = server.tools[item.toolIndex];
-        tool.isDirect = !tool.isDirect;
-        if (tool.isDirect && server.source === "import") {
-          this.importNotice = `Imported from ${server.importKind ?? "external"} — will copy to user config on save`;
-        }
-        this.updateDirty();
       }
       return;
     }
@@ -419,92 +309,21 @@ class McpPanel {
     }
   }
 
-  private toggleItem(item: VisibleItem): void {
-    const server = this.servers[item.serverIndex];
-    if (item.type === "server") {
-      const newState = !server.tools.every((t) => t.isDirect);
-      if (server.source === "import" && newState) {
-        this.importNotice = `Imported from ${server.importKind ?? "external"} — will copy to user config on save`;
-      }
-      for (const t of server.tools) t.isDirect = newState;
-    } else if (item.toolIndex !== undefined) {
-      const tool = server.tools[item.toolIndex];
-      tool.isDirect = !tool.isDirect;
-      if (tool.isDirect && server.source === "import") {
-        this.importNotice = `Imported from ${server.importKind ?? "external"} — will copy to user config on save`;
-      }
-    }
-    this.updateDirty();
-  }
-
-  private handleDiscardInput(data: string): void {
-    if (matchesKey(data, "ctrl+c")) {
-      this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
-      return;
-    }
-    if (matchesKey(data, "escape") || data === "n" || data === "N") {
-      this.confirmingDiscard = false;
-      return;
-    }
-    if (matchesKey(data, "return")) {
-      if (this.discardSelected === 0) {
-        this.cleanup();
-        this.done({ cancelled: true, changes: new Map() });
-      } else {
-        this.confirmingDiscard = false;
-      }
-      return;
-    }
-    if (data === "y" || data === "Y") {
-      this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
-      return;
-    }
-    if (matchesKey(data, "left") || matchesKey(data, "right") || matchesKey(data, "tab")) {
-      this.discardSelected = this.discardSelected === 0 ? 1 : 0;
-    }
-  }
-
   private moveCursor(delta: number): void {
     if (this.visibleItems.length === 0) return;
     this.cursorIndex = Math.max(0, Math.min(this.visibleItems.length - 1, this.cursorIndex + delta));
   }
 
   private rebuildServerTools(server: ServerState, entry: ServerCacheEntry): void {
-    const existingState = new Map<string, boolean>();
-    for (const t of server.tools) existingState.set(t.name, t.isDirect);
-
     const newTools: ToolState[] = [];
     for (const tool of entry.tools ?? []) {
-      const prev = existingState.get(tool.name);
-      const isDirect = prev !== undefined ? prev : false;
       newTools.push({
         name: tool.name,
         description: tool.description ?? "",
-        isDirect,
-        wasDirect: prev !== undefined ? server.tools.find((t) => t.name === tool.name)?.wasDirect ?? false : false,
-        estimatedTokens: estimateTokens(tool),
       });
     }
-
-    for (const resource of entry.resources ?? []) {
-      const baseName = `get_${resourceNameToToolName(resource.name)}`;
-      const prev = existingState.get(baseName);
-      const isDirect = prev !== undefined ? prev : false;
-      const ct: CachedTool = { name: baseName, description: resource.description };
-      newTools.push({
-        name: baseName,
-        description: resource.description ?? `Read resource: ${resource.uri}`,
-        isDirect,
-        wasDirect: prev !== undefined ? server.tools.find((t) => t.name === baseName)?.wasDirect ?? false : false,
-        estimatedTokens: estimateTokens(ct),
-      });
-    }
-
     server.tools = newTools;
     this.rebuildVisibleItems();
-    this.updateDirty();
   }
 
   render(width: number): string[] {
@@ -513,7 +332,6 @@ class McpPanel {
     const t = this.t;
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
     const italic = (s: string) => `\x1b[3m${s}\x1b[23m`;
-    const inverse = (s: string) => `\x1b[7m${s}\x1b[27m`;
 
     const row = (content: string) =>
       fg(t.border, "│") + truncateToWidth(" " + content, innerW, "…", true) + fg(t.border, "│");
@@ -572,48 +390,21 @@ class McpPanel {
         lines.push(row(`${rainbowProgress(prog, 10)}  ${fg(t.hint, `${this.cursorIndex + 1}/${total}`)}`));
         lines.push(emptyRow());
       }
-
-      if (this.importNotice) {
-        lines.push(row(fg(t.needsAuth, italic(this.importNotice))));
-        lines.push(emptyRow());
-      }
-      if (this.authNotice) {
-        lines.push(row(fg(t.needsAuth, italic(this.authNotice))));
-        lines.push(emptyRow());
-      }
     }
 
     lines.push(divider());
     lines.push(emptyRow());
 
-    if (this.confirmingDiscard) {
-      const discardBtn = this.discardSelected === 0
-        ? inverse(bold(fg(t.cancel, "  Discard  ")))
-        : fg(t.hint, "  Discard  ");
-      const keepBtn = this.discardSelected === 1
-        ? inverse(bold(fg(t.confirm, "  Keep  ")))
-        : fg(t.hint, "  Keep  ");
-      lines.push(row(`Discard unsaved changes?  ${discardBtn}   ${keepBtn}`));
-    } else {
-      const directCount = this.servers.reduce((sum, s) => sum + s.tools.filter((t) => t.isDirect).length, 0);
-      const totalTokens = this.servers.reduce(
-        (sum, s) => sum + s.tools.filter((t) => t.isDirect).reduce((ts, t) => ts + t.estimatedTokens, 0),
-        0,
-      );
-      const stats =
-        directCount > 0 ? `${directCount} direct  ~${totalTokens.toLocaleString()} tokens` : "no direct tools";
-      lines.push(row(fg(t.description, stats + (this.dirty ? fg(t.needsAuth, "  (unsaved)") : ""))));
-    }
+    const toolCount = this.servers.reduce((sum, s) => sum + s.tools.length, 0);
+    lines.push(row(fg(t.description, `${toolCount} tools across ${this.servers.length} servers`)));
 
     lines.push(emptyRow());
     const hints = [
       italic("↑↓") + " navigate",
-      italic("space") + " toggle",
       italic("⏎") + " expand",
       italic("ctrl+r") + " reconnect",
       italic("?") + " desc search",
-      italic("ctrl+s") + " save",
-      italic("esc") + " clear/close",
+      italic("esc") + " close",
       italic("ctrl+c") + " quit",
     ];
     const gap = "  ";
@@ -650,48 +441,37 @@ class McpPanel {
     const nameStr = isCursor ? bold(fg(t.selected, server.name)) : server.name;
     const importLabel = server.source === "import" ? fg(t.description, ` (${server.importKind ?? "import"})`) : "";
 
-    if (!server.hasCachedData) {
-      return `${prefix}   ${nameStr}${importLabel}  ${fg(t.description, "(not cached)")}`;
-    }
-
-    const directCount = server.tools.filter((t) => t.isDirect).length;
-    const totalCount = server.tools.length;
-    let toggleIcon = fg(t.description, "○");
-    if (directCount === totalCount && totalCount > 0) {
-      toggleIcon = fg(t.direct, "●");
-    } else if (directCount > 0) {
-      toggleIcon = fg(t.needsAuth, "◐");
-    }
+    let statusIcon = fg(t.description, "○");
+    if (server.connectionStatus === "connected") statusIcon = fg(t.selected, "✓");
+    else if (server.connectionStatus === "failed") statusIcon = fg(t.needsAuth, "✗");
+    else if (server.connectionStatus === "needs-auth") statusIcon = fg(t.needsAuth, "🔑");
+    else if (server.connectionStatus === "connecting") statusIcon = fg(t.needsAuth, "⟳");
 
     let toolInfo = "";
-    if (totalCount > 0) {
-      toolInfo = `${directCount}/${totalCount}`;
-      if (directCount > 0) {
-        const tokens = server.tools.filter((t) => t.isDirect).reduce((s, t) => s + t.estimatedTokens, 0);
-        toolInfo += `  ~${tokens.toLocaleString()}`;
-      }
-      toolInfo = fg(t.description, toolInfo);
+    if (server.tools.length > 0) {
+      toolInfo = fg(t.description, `${server.tools.length} tools`);
+    } else if (!server.hasCachedData) {
+      toolInfo = fg(t.description, "(not cached)");
     }
 
-    return `${prefix} ${toggleIcon} ${nameStr}${importLabel}  ${toolInfo}`;
+    return `${prefix} ${statusIcon} ${nameStr}${importLabel}  ${toolInfo}`;
   }
 
   private renderToolRow(tool: ToolState, isCursor: boolean, innerW: number): string {
     const t = this.t;
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
-    const toggleIcon = tool.isDirect ? fg(t.direct, "●") : fg(t.description, "○");
     const cursor = isCursor ? fg(t.selected, "▸") : " ";
     const nameStr = isCursor ? bold(fg(t.selected, tool.name)) : tool.name;
 
-    const prefixLen = 7 + visibleWidth(tool.name);
+    const prefixLen = 5 + visibleWidth(tool.name);
     const maxDescLen = Math.max(0, innerW - prefixLen - 8);
     const descStr =
       maxDescLen > 5 && tool.description
         ? fg(t.description, "— " + truncateToWidth(tool.description, maxDescLen, "…"))
         : "";
 
-    return `  ${cursor} ${toggleIcon} ${nameStr} ${descStr}`;
+    return `  ${cursor} ${nameStr} ${descStr}`;
   }
 
   invalidate(): void {}
@@ -704,10 +484,9 @@ class McpPanel {
 export function createMcpPanel(
   config: McpConfig,
   cache: MetadataCache | null,
-  provenance: Map<string, ServerProvenance>,
   callbacks: McpPanelCallbacks,
   tui: { requestRender(): void },
-  done: (result: McpPanelResult) => void,
+  done: () => void,
 ): McpPanel & { dispose(): void } {
-  return new McpPanel(config, cache, provenance, callbacks, tui, done);
+  return new McpPanel(config, cache, callbacks, tui, done);
 }

@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
-import type { McpConfig, ServerEntry, McpSettings, ImportKind, ServerProvenance } from "./types.js";
+import type { McpConfig, ServerEntry, McpSettings, ImportKind } from "./types.js";
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".pi", "agent", "mcp.json");
 const PROJECT_CONFIG_NAME = ".pi/mcp.json";
@@ -128,99 +128,4 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
   return servers as Record<string, ServerEntry>;
 }
 
-export function getServerProvenance(overridePath?: string): Map<string, ServerProvenance> {
-  const provenance = new Map<string, ServerProvenance>();
-  const userPath = overridePath ? resolve(overridePath) : DEFAULT_CONFIG_PATH;
 
-  let userConfig: McpConfig = { mcpServers: {} };
-  if (existsSync(userPath)) {
-    try {
-      userConfig = validateConfig(JSON.parse(readFileSync(userPath, "utf-8")));
-    } catch {}
-  }
-  for (const name of Object.keys(userConfig.mcpServers)) {
-    provenance.set(name, { path: userPath, kind: "user" });
-  }
-
-  if (userConfig.imports?.length) {
-    for (const importKind of userConfig.imports) {
-      const importPath = IMPORT_PATHS[importKind];
-      if (!importPath) continue;
-      const fullPath = importPath.startsWith(".")
-        ? resolve(process.cwd(), importPath)
-        : importPath;
-      if (!existsSync(fullPath)) continue;
-      try {
-        const imported = JSON.parse(readFileSync(fullPath, "utf-8"));
-        const servers = extractServers(imported, importKind);
-        for (const name of Object.keys(servers)) {
-          if (!provenance.has(name)) {
-            provenance.set(name, { path: userPath, kind: "import", importKind });
-          }
-        }
-      } catch {}
-    }
-  }
-
-  const projectPath = resolve(process.cwd(), PROJECT_CONFIG_NAME);
-  if (existsSync(projectPath) && projectPath !== userPath) {
-    try {
-      const projectConfig = validateConfig(JSON.parse(readFileSync(projectPath, "utf-8")));
-      for (const name of Object.keys(projectConfig.mcpServers)) {
-        provenance.set(name, { path: projectPath, kind: "project" });
-      }
-    } catch {}
-  }
-
-  return provenance;
-}
-
-export function writeDirectToolsConfig(
-  changes: Map<string, true | string[] | false>,
-  provenance: Map<string, ServerProvenance>,
-  fullConfig: McpConfig,
-): void {
-  const byPath = new Map<string, { name: string; value: true | string[] | false; prov: ServerProvenance }[]>();
-
-  for (const [serverName, value] of changes) {
-    const prov = provenance.get(serverName);
-    if (!prov) continue;
-
-    const targetPath = prov.path;
-
-    if (!byPath.has(targetPath)) byPath.set(targetPath, []);
-    byPath.get(targetPath)!.push({ name: serverName, value, prov });
-  }
-
-  for (const [filePath, entries] of byPath) {
-    let raw: Record<string, unknown> = {};
-    if (existsSync(filePath)) {
-      try {
-        raw = JSON.parse(readFileSync(filePath, "utf-8"));
-      } catch {}
-    }
-    if (!raw || typeof raw !== "object") raw = {};
-
-    const servers = (raw.mcpServers ?? raw["mcp-servers"] ?? {}) as Record<string, ServerEntry>;
-    if (typeof servers !== "object" || Array.isArray(servers)) continue;
-
-    for (const { name, value, prov } of entries) {
-      if (prov.kind === "import") {
-        const fullDef = fullConfig.mcpServers[name];
-        if (fullDef) {
-          servers[name] = { ...fullDef, directTools: value };
-        }
-      } else if (servers[name]) {
-        servers[name] = { ...servers[name], directTools: value };
-      }
-    }
-
-    const key = raw["mcp-servers"] && !raw.mcpServers ? "mcp-servers" : "mcpServers";
-    raw[key] = servers;
-
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmpPath = `${filePath}.${process.pid}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
-    renameSync(tmpPath, filePath);
-  }
-}

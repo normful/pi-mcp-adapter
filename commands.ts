@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
-import type { McpConfig, ServerEntry, McpPanelCallbacks, McpPanelResult } from "./types.js";
-import { getServerProvenance, writeDirectToolsConfig } from "./config.js";
+import type { McpConfig, ServerEntry, McpPanelCallbacks } from "./types.js";
 import { lazyConnect, updateMetadataCache, updateStatusBar, getFailureAgeSeconds } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import { getStoredTokens } from "./oauth-handler.js";
@@ -168,7 +167,6 @@ export async function openMcpPanel(
 ): Promise<void> {
   const config = state.config;
   const cache = loadMetadataCache();
-  const provenanceMap = getServerProvenance(pi.getFlag("mcp-config") as string | undefined ?? configOverridePath);
 
   const callbacks: McpPanelCallbacks = {
     reconnect: async (serverName: string) => {
@@ -195,11 +193,7 @@ export async function openMcpPanel(
   return new Promise<void>((resolve) => {
     ctx.ui.custom(
       (tui, _theme, _keybindings, done) => {
-        return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
-          if (!result.cancelled && result.changes.size > 0) {
-            writeDirectToolsConfig(result.changes, provenanceMap, config);
-            ctx.ui.notify("Direct tools updated. Restart pi to apply.", "info");
-          }
+        return createMcpPanel(config, cache, callbacks, tui, () => {
           done();
           resolve();
         });
