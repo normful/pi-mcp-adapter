@@ -46,7 +46,6 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("Loaded mcp tool (.pi/mcp.json detected)", "info");
     initPromise = initializeMcp(pi, ctx);
 
     initPromise
