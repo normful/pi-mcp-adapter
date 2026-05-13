@@ -4,6 +4,8 @@ import type {
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.js";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
   showStatus,
@@ -13,10 +15,6 @@ import {
   openMcpPanel,
 } from "./commands.js";
 import { loadMcpConfig } from "./config.js";
-import {
-  createDirectToolExecutor,
-  resolveDirectTools,
-} from "./direct-tools.js";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.js";
 import { loadMetadataCache } from "./metadata-cache.js";
 import {
@@ -28,58 +26,27 @@ import {
   executeStatus,
   executeUiMessages,
 } from "./proxy-modes.js";
-import { getConfigPathFromArgv, truncateAtWord } from "./utils.js";
+import { getConfigPathFromArgv } from "./utils.js";
 
 export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
-
-  const earlyConfigPath = getConfigPathFromArgv();
-  const earlyConfig = loadMcpConfig(earlyConfigPath);
-  const earlyCache = loadMetadataCache();
-  const prefix = earlyConfig.settings?.toolPrefix ?? "server";
-
-  const envRaw = process.env.MCP_DIRECT_TOOLS;
-  const directSpecs =
-    envRaw === "__none__"
-      ? []
-      : resolveDirectTools(
-          earlyConfig,
-          earlyCache,
-          prefix,
-          envRaw
-            ?.split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        );
-
-  for (const spec of directSpecs) {
-    pi.registerTool({
-      name: spec.prefixedName,
-      label: `MCP: ${spec.originalName}`,
-      description: spec.description || "(no description)",
-      promptSnippet:
-        truncateAtWord(spec.description, 100) ||
-        `MCP tool from ${spec.serverName}`,
-      parameters: Type.Unsafe<Record<string, unknown>>(
-        spec.inputSchema || { type: "object", properties: {} },
-      ),
-      execute: createDirectToolExecutor(
-        () => state,
-        () => initPromise,
-        spec,
-      ),
-    });
-  }
-
-  const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
   pi.registerFlag("mcp-config", {
     description: "Path to MCP config file",
     type: "string",
   });
 
+  // Only activate MCP support if the project has a .pi/mcp.json file
+  const projectMcpPath = resolve(process.cwd(), ".pi", "mcp.json");
+  if (!existsSync(projectMcpPath)) return;
+
+  const earlyConfigPath = getConfigPathFromArgv();
+
+  const getPiTools = (): ToolInfo[] => pi.getAllTools();
+
   pi.on("session_start", async (_event, ctx) => {
+    ctx.ui.notify("Loaded mcp tool (.pi/mcp.json detected)", "info");
     initPromise = initializeMcp(pi, ctx);
 
     initPromise
